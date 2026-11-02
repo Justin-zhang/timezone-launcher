@@ -3,20 +3,29 @@ import AppKit
 enum IconRenderer {
     static let canvas: CGFloat = 1024
 
-    /// 目标 App 图标右下角叠一个圆形角标
+    /// 目标 App 图标右下角叠一个圆形角标。
+    /// macOS 26 起,外轮廓不是标准圆角方块的图标会被系统当成旧图标,缩小后垫一块底板(深色模式下是黑的),
+    /// 所以角标要画在圆角方块(1024 画布上的 100...924)以内,再按原图标的轮廓裁一遍,保证外轮廓和原图标一致
     static func badgedIcon(base: NSImage, badge: String, color: NSColor, size: CGFloat = canvas) -> NSBitmapImageRep {
-        draw(size: size) { s in
-            base.draw(in: NSRect(x: 0, y: 0, width: s, height: s), from: .zero, operation: .sourceOver, fraction: 1)
-
-            let d = s * 0.42
-            let m = s * 0.02
-            let circle = NSRect(x: s - d - m, y: m, width: d, height: d)
+        let badgeLayer = draw(size: size) { s in
+            let d = s * 0.38
+            let ring = s * 0.018
+            let edge = s * 100 / canvas + ring + s * 0.012
+            let circle = NSRect(x: s - edge - d, y: edge, width: d, height: d)
             NSColor.white.setFill()
-            NSBezierPath(ovalIn: circle.insetBy(dx: -s * 0.018, dy: -s * 0.018)).fill()
+            NSBezierPath(ovalIn: circle.insetBy(dx: -ring, dy: -ring)).fill()
             color.setFill()
             NSBezierPath(ovalIn: circle).fill()
-
             drawCentered(badge, in: circle, maxWidth: d * 0.78, startSize: d * 0.67, color: .white)
+
+            if #available(macOS 26, *) {
+                base.draw(in: NSRect(x: 0, y: 0, width: s, height: s), from: .zero, operation: .destinationIn, fraction: 1)
+            }
+        }
+        return draw(size: size) { s in
+            let full = NSRect(x: 0, y: 0, width: s, height: s)
+            base.draw(in: full, from: .zero, operation: .sourceOver, fraction: 1)
+            badgeLayer.draw(in: full, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
         }
     }
 
