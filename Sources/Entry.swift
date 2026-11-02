@@ -43,13 +43,14 @@ final class LauncherStore: ObservableObject {
 // MARK: - 命令行(脚本化和自测用)
 
 enum CLI {
-    static let commands: Set<String> = ["--list", "--create", "--remove", "--render-icon", "--write-tool-icns", "--add-dock-folder", "--help"]
+    static let commands: Set<String> = ["--list", "--create", "--add-default", "--remove", "--render-icon", "--write-tool-icns", "--add-dock-folder", "--help"]
 
     static let usage = """
     用法:
       时区启动器 --list
       时区启动器 --create --app <App路径> --tz <时区> [--badge 文字] [--color #RRGGBB]
-                         [--name 名称] [--no-block-claude] [--data-dir 目录] [--replace]
+                         [--name 名称] [--no-block-claude] [--no-default] [--data-dir 目录] [--replace]
+      时区启动器 --add-default --app <浏览器路径> [--replace]
       时区启动器 --remove <快捷方式路径> [--with-data]
       时区启动器 --render-icon --app <App路径> --tz <时区> [--badge 文字] [--color #RRGGBB] --out <png>
       时区启动器 --write-tool-icns <icns路径>
@@ -76,8 +77,11 @@ enum CLI {
             switch args[0] {
             case "--list":
                 for l in LauncherInfo.scanAll() {
-                    var line = "\(l.name)\t\(l.targetName) (\(l.targetBundleID))\t\(l.timeZoneID)"
-                    if l.browserKind == .chromium { line += "\t浏览器" + (l.blockClaude ? "·屏蔽Claude" : "") + "\t\(l.dataDir ?? "")" }
+                    var line = "\(l.name)\t\(l.targetName) (\(l.targetBundleID))\t"
+                    line += l.kind == .defaultBrowser ? "平时用的实例(系统时区)" : l.timeZoneID
+                    if l.browserKind == .chromium && l.kind == .timeZone {
+                        line += "\t浏览器" + (l.blockClaude ? "·屏蔽Claude" : "") + "\t\(l.dataDir ?? "")"
+                    }
                     if !l.targetInstalled { line += "\t[目标 App 未安装]" }
                     print(line)
                 }
@@ -89,7 +93,14 @@ enum CLI {
                 o.blockClaude = !flags.contains("--no-block-claude")
                 o.dataDir = opts["--data-dir"].map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
                 o.replace = flags.contains("--replace")
+                o.addDefaultCompanion = !flags.contains("--no-default")
                 let url = try LauncherBuilder.build(for: app, options: o)
+                print("已生成:\(url.path)")
+            case "--add-default":
+                guard let path = opts["--app"], let app = TargetApp.load(URL(fileURLWithPath: path)) else {
+                    throw BuildError.io("缺少或无效的 --app")
+                }
+                let url = try LauncherBuilder.buildDefaultCompanion(for: app, replace: flags.contains("--replace"))
                 print("已生成:\(url.path)")
             case "--remove":
                 guard let p = positional.first, let info = LauncherInfo.load(URL(fileURLWithPath: p)) else {

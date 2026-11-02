@@ -27,6 +27,7 @@ struct LauncherOptions {
     var customName: String? = nil
     var dataDir: URL? = nil
     var replace: Bool = false
+    var addDefaultCompanion: Bool = true
 }
 
 enum LauncherBuilder {
@@ -48,23 +49,6 @@ enum LauncherBuilder {
 
         let tzName = TimeZoneCatalog.displayName(for: tz)
         let name = sanitizeFileName(options.customName ?? "\(app.name) \(tzName)")
-        let dest = launcherRoot.appendingPathComponent(name + ".app")
-
-        try fm.createDirectory(at: launcherRoot, withIntermediateDirectories: true)
-        ensureFolderIcon()
-        if fm.fileExists(atPath: dest.path) {
-            guard options.replace else { throw BuildError.exists(name) }
-            try fm.trashItem(at: dest, resultingItemURL: nil)
-        }
-
-        // 先在临时目录拼好,再整体移动过去,避免留下半成品
-        let work = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? fm.removeItem(at: work) }
-        let bundle = work.appendingPathComponent(name + ".app")
-        let macOS = bundle.appendingPathComponent("Contents/MacOS")
-        let resources = bundle.appendingPathComponent("Contents/Resources")
-        try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
-        try fm.createDirectory(at: resources, withIntermediateDirectories: true)
 
         var dataDir: URL? = nil
         if app.browserKind == .chromium {
@@ -76,25 +60,10 @@ enum LauncherBuilder {
 
         let script = launchScript(app: app, timeZoneID: tz, dataDir: dataDir,
                                   blockClaude: app.browserKind == .chromium && options.blockClaude)
-        let exe = macOS.appendingPathComponent("launch")
-        try script.write(to: exe, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
-
         let rep = IconRenderer.badgedIcon(base: app.icon, badge: options.badge, color: options.badgeColor)
-        try IconRenderer.writeICNS(rep, to: resources.appendingPathComponent("AppIcon.icns"))
-
-        let info: [String: Any] = [
-            "CFBundleName": name,
-            "CFBundleDisplayName": name,
-            "CFBundleIdentifier": launcherBundleID(app.bundleID, tz),
-            "CFBundleExecutable": "launch",
-            "CFBundleIconFile": "AppIcon",
-            "CFBundlePackageType": "APPL",
-            "CFBundleVersion": "1",
-            "CFBundleShortVersionString": "1.0",
-            "LSUIElement": true,
-            // 时区启动器自己用的元数据
-            "TZLManaged": true,
+        let dest = try writeBundle(name: name, bundleID: launcherBundleID(app.bundleID, tz),
+                                   script: script, icon: rep, replace: options.replace, meta: [
+            "TZLKind": LauncherKind.timeZone.rawValue,
             "TZLTargetBundleID": app.bundleID,
             "TZLTargetName": app.name,
             "TZLTimeZone": tz,
@@ -104,22 +73,117 @@ enum LauncherBuilder {
             "TZLBrowserKind": app.browserKind.rawValue,
             "TZLBlockClaude": app.browserKind == .chromium && options.blockClaude,
             "TZLDataDir": dataDir?.path ?? "",
-        ]
-        let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-        try plist.write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+        ])
 
-        try fm.moveItem(at: bundle, to: dest)
-        LSRegisterURL(dest as CFURL, true)
+        // 独立实例开着时,直接点浏览器图标只会切到它;配一个「平时用的浏览器」快捷方式
+        if app.browserKind == .chromium && options.addDefaultCompanion {
+            do {
+                try buildDefaultCompanion(for: app, replace: false)
+            } catch BuildError.exists {
+                // 已经有了,保留原样
+            }
+        }
         return dest
     }
 
-    /// 删除快捷方式(移到废纸篓,可恢复);浏览器数据只在明确要求时一起移走
+    static func defaultCompanionName(for app: TargetApp) -> String {
+        sanitizeFileName("\(app.name)（默认）")
+    }
+
+    /// 生成「平时用的浏览器」快捷方式:默认数据目录、系统时区,用 -n 强制另开实例
+    @discardableResult
+    static func buildDefaultCompanion(for app: TargetApp, replace: Bool) throws -> URL {
+        guard app.browserKind == .chromium else {
+            throw BuildError.unsupportedBrowser("\(app.name) 不是支持的浏览器")
+        }
+        let alert = "display alert \"找不到 \(appleScriptSafe(app.name))\" message \"它可能已被卸载。请在「时区启动器」里删除这个快捷方式。\" as warning"
+        let script = [
+            "#!/bin/bash",
+            "# 由「时区启动器」生成:打开平时用的 \(app.name)(默认数据目录、系统时区)",
+            "# 独立实例(例如北京时间那个)开着时,直接点浏览器图标只会切到它,所以这里用 -n 强制另开",
+            "# 平时用的实例已经开着时,浏览器会把这次启动转交给它,打开一个新窗口",
+            "/usr/bin/open -n -b \(sh(app.bundleID)) 2>/dev/null && exit 0",
+            "/usr/bin/open -n -a \(sh(app.url.path)) 2>/dev/null && exit 0",
+            "/usr/bin/osascript -e \(sh(alert)) >/dev/null 2>&1",
+            "exit 1",
+        ].joined(separator: "\n") + "\n"
+        return try writeBundle(
+            name: defaultCompanionName(for: app),
+            bundleID: launcherBundleID(app.bundleID, "default"),
+            script: script, icon: IconRenderer.plainIcon(base: app.icon), replace: replace,
+            meta: [
+                "TZLKind": LauncherKind.defaultBrowser.rawValue,
+                "TZLTargetBundleID": app.bundleID,
+                "TZLTargetName": app.name,
+                "TZLTimeZone": "",
+                "TZLTimeZoneName": "系统时区",
+                "TZLBrowserKind": app.browserKind.rawValue,
+                "TZLBlockClaude": false,
+                "TZLDataDir": "",
+            ])
+    }
+
+    /// 删除快捷方式(移到废纸篓,可恢复);浏览器数据只在明确要求时一起移走。
+    /// 某个浏览器的独立实例快捷方式全删光后,配套的「平时用的」快捷方式也一起移走。
     static func remove(_ info: LauncherInfo, withData: Bool) throws {
         let fm = FileManager.default
         try fm.trashItem(at: info.url, resultingItemURL: nil)
         if withData, let dir = info.dataDir, fm.fileExists(atPath: dir) {
             try fm.trashItem(at: URL(fileURLWithPath: dir), resultingItemURL: nil)
         }
+        guard info.browserKind == .chromium, info.kind == .timeZone else { return }
+        let rest = LauncherInfo.scanAll().filter { $0.targetBundleID == info.targetBundleID }
+        if !rest.contains(where: { $0.kind == .timeZone }) {
+            for companion in rest where companion.kind == .defaultBrowser {
+                try? fm.trashItem(at: companion.url, resultingItemURL: nil)
+            }
+        }
+    }
+
+    /// 在临时目录拼好快捷方式 App,再整体移到 launcherRoot,避免留下半成品
+    private static func writeBundle(name: String, bundleID: String, script: String, icon: NSBitmapImageRep,
+                                    replace: Bool, meta: [String: Any]) throws -> URL {
+        let fm = FileManager.default
+        let dest = launcherRoot.appendingPathComponent(name + ".app")
+        try fm.createDirectory(at: launcherRoot, withIntermediateDirectories: true)
+        ensureFolderIcon()
+        if fm.fileExists(atPath: dest.path) {
+            guard replace else { throw BuildError.exists(name) }
+            try fm.trashItem(at: dest, resultingItemURL: nil)
+        }
+
+        let work = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fm.removeItem(at: work) }
+        let bundle = work.appendingPathComponent(name + ".app")
+        let macOS = bundle.appendingPathComponent("Contents/MacOS")
+        let resources = bundle.appendingPathComponent("Contents/Resources")
+        try fm.createDirectory(at: macOS, withIntermediateDirectories: true)
+        try fm.createDirectory(at: resources, withIntermediateDirectories: true)
+
+        let exe = macOS.appendingPathComponent("launch")
+        try script.write(to: exe, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+        try IconRenderer.writeICNS(icon, to: resources.appendingPathComponent("AppIcon.icns"))
+
+        var info: [String: Any] = [
+            "CFBundleName": name,
+            "CFBundleDisplayName": name,
+            "CFBundleIdentifier": bundleID,
+            "CFBundleExecutable": "launch",
+            "CFBundleIconFile": "AppIcon",
+            "CFBundlePackageType": "APPL",
+            "CFBundleVersion": "1",
+            "CFBundleShortVersionString": "1.0",
+            "LSUIElement": true,
+            "TZLManaged": true,  // 时区启动器靠 TZL* 键识别和管理自己生成的快捷方式
+        ]
+        info.merge(meta) { _, new in new }
+        let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try plist.write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+
+        try fm.moveItem(at: bundle, to: dest)
+        LSRegisterURL(dest as CFURL, true)
+        return dest
     }
 
     static func launchScript(app: TargetApp, timeZoneID tz: String, dataDir: URL?, blockClaude: Bool) -> String {

@@ -140,10 +140,12 @@ struct LauncherRow: View {
                 .frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(info.name).font(.headline)
-                Text("\(info.targetName) · \(info.timeZoneName)(\(info.timeZoneID))")
+                Text(info.kind == .defaultBrowser
+                     ? "\(info.targetName) · 平时用的实例(默认数据、系统时区)"
+                     : "\(info.targetName) · \(info.timeZoneName)(\(info.timeZoneID))")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                if info.browserKind == .chromium {
+                if info.browserKind == .chromium && info.kind == .timeZone {
                     Label("独立浏览器数据" + (info.blockClaude ? " · 已屏蔽 Claude" : ""), systemImage: "globe")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -156,7 +158,7 @@ struct LauncherRow: View {
             }
             Spacer()
             TimelineView(.everyMinute) { ctx in
-                Text(TimeZoneCatalog.currentTime(in: info.timeZoneID, at: ctx.date))
+                Text(TimeZoneCatalog.currentTime(in: info.effectiveTimeZoneID, at: ctx.date))
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -239,6 +241,7 @@ struct AddLauncherView: View {
     @State private var badgeEdited = false
     @State private var color = Color(nsColor: .defaultBadge)
     @State private var blockClaude = true
+    @State private var addDefaultCompanion = true
     @State private var replaceExisting = false
     @State private var failures: [String] = []
 
@@ -399,6 +402,11 @@ struct AddLauncherView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Toggle("同时生成「平时用的浏览器」快捷方式", isOn: $addDefaultCompanion)
+            Text("独立实例开着时,直接点浏览器图标只会切到它,打不开平时用的那个。这个快捷方式会强制另开平时用的浏览器(默认数据、系统时区)。已经有了就不会重复生成。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -426,6 +434,7 @@ struct AddLauncherView: View {
         var options = LauncherOptions(timeZoneID: timeZoneID, badge: badge)
         options.badgeColor = NSColor(color)
         options.blockClaude = blockClaude
+        options.addDefaultCompanion = addDefaultCompanion
         options.replace = replaceExisting
         for app in buildable {
             do {

@@ -131,8 +131,14 @@ struct TargetApp: Identifiable, Hashable {
 
 // MARK: - 已生成的快捷方式
 
+enum LauncherKind: String {
+    case timeZone = "timezone"        // 以指定时区启动
+    case defaultBrowser = "default"   // 浏览器「平时用的」实例:默认数据目录、系统时区
+}
+
 struct LauncherInfo: Identifiable, Hashable {
     let url: URL
+    let kind: LauncherKind
     let targetBundleID: String
     let targetName: String
     let timeZoneID: String
@@ -148,18 +154,24 @@ struct LauncherInfo: Identifiable, Hashable {
     var targetInstalled: Bool {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: targetBundleID) != nil
     }
+    /// 「平时用的」快捷方式没有指定时区,跟随系统
+    var effectiveTimeZoneID: String { kind == .defaultBrowser ? TimeZone.current.identifier : timeZoneID }
 
     static func load(_ url: URL) -> LauncherInfo? {
         let plistURL = url.appendingPathComponent("Contents/Info.plist")
         guard let data = try? Data(contentsOf: plistURL),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               dict["TZLManaged"] as? Bool == true,
-              let bid = dict["TZLTargetBundleID"] as? String,
-              let tz = dict["TZLTimeZone"] as? String
+              let bid = dict["TZLTargetBundleID"] as? String
         else { return nil }
+        // v1.0 生成的快捷方式没有 TZLKind,都按指定时区处理
+        let kind = LauncherKind(rawValue: dict["TZLKind"] as? String ?? "") ?? .timeZone
+        let tz = dict["TZLTimeZone"] as? String ?? ""
+        guard kind == .defaultBrowser || !tz.isEmpty else { return nil }
         let dataDir = (dict["TZLDataDir"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         return LauncherInfo(
             url: url,
+            kind: kind,
             targetBundleID: bid,
             targetName: dict["TZLTargetName"] as? String ?? bid,
             timeZoneID: tz,

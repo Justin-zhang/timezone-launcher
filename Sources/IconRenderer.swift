@@ -20,6 +20,13 @@ enum IconRenderer {
         }
     }
 
+    /// 不加角标的原图标(「平时用的」浏览器快捷方式用)
+    static func plainIcon(base: NSImage, size: CGFloat = canvas) -> NSBitmapImageRep {
+        draw(size: size) { s in
+            base.draw(in: NSRect(x: 0, y: 0, width: s, height: s), from: .zero, operation: .sourceOver, fraction: 1)
+        }
+    }
+
     /// 时区启动器自身和快捷方式文件夹用的图标:红色圆角方块 + 表盘 + 一个字
     static func clockIcon(text: String, size: CGFloat = canvas) -> NSBitmapImageRep {
         draw(size: size) { s in

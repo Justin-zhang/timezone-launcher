@@ -12,6 +12,7 @@
 
 - 先按 bundle ID 找目标 App，找不到再用生成时记录的路径；都失败时弹窗提示
 - Chromium 系浏览器（Chrome / Edge / Brave / Vivaldi / Opera）另开独立数据目录的实例，可选屏蔽 `claude.ai`、`claude.com`、`anthropic.com`（`--host-rules`）
+- 浏览器同时生成一个「<浏览器>（默认）」快捷方式：独立实例开着时，直接点浏览器图标只会切到它（两者是同一个 bundle ID），这个快捷方式用 `open -n` 强制另开平时用的实例；平时的实例已开着时，浏览器会把启动转交给它并新开一个窗口。某个浏览器的时区快捷方式全部删掉后，它会一起被移走
 - Safari、Firefox、Arc 不支持：Safari 的网页进程不继承环境变量，Firefox/Arc 暂未适配
 
 ## 局限
@@ -22,6 +23,7 @@
 - App 自己的开机自启、系统「重新登录时重新打开窗口」（只记录 bundle ID 和路径，不记录环境变量）
 - 从通知、链接、Dock 原图标唤起
 - App 已在运行时点快捷方式只会切到前台，时区以它上次启动时为准
+- 浏览器的两个实例同时开着时，其他 App 里点的链接交给哪个实例由系统决定；只开着独立实例时，链接会在它里面打开
 
 ## 构建
 
@@ -40,7 +42,8 @@
 T=~/Applications/时区启动器.app/Contents/MacOS/TimeZoneLauncher
 $T --list
 $T --create --app /Applications/WeChat.app --tz Asia/Shanghai [--badge 京] [--color "#DC1F1F"] [--name "微信 北京"] [--replace]
-$T --create --app "/Applications/Google Chrome.app" --tz Asia/Shanghai --data-dir <目录> [--no-block-claude]
+$T --create --app "/Applications/Google Chrome.app" --tz Asia/Shanghai --data-dir <目录> [--no-block-claude] [--no-default]
+$T --add-default --app "/Applications/Google Chrome.app"   # 单独生成「平时用的浏览器」快捷方式
 $T --remove "<快捷方式路径>" [--with-data]
 $T --render-icon --app <App路径> --tz <时区> --out preview.png
 $T --add-dock-folder
