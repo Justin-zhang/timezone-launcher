@@ -242,6 +242,7 @@ struct AddLauncherView: View {
     @State private var color = Color(nsColor: .defaultBadge)
     @State private var blockClaude = true
     @State private var addDefaultCompanion = true
+    @State private var removeFromDock = true
     @State private var replaceExisting = false
     @State private var failures: [String] = []
 
@@ -260,10 +261,15 @@ struct AddLauncherView: View {
                 badgeSection
                 if hasBrowser { browserSection }
                 Section {
+                    Toggle("从 Dock 移除原 App 的图标", isOn: $removeFromDock)
+                    Text("避免误点原图标以系统时区打开。App 运行时 Dock 里仍会显示它的图标,退出后消失。浏览器只在有「平时用的浏览器」快捷方式时才移除。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Toggle("覆盖已存在的同名快捷方式", isOn: $replaceExisting)
                 }
                 if !failures.isEmpty {
-                    Section("没有生成成功") {
+                    Section("没有完成") {
                         ForEach(failures, id: \.self) { Text($0).foregroundStyle(.red) }
                     }
                 }
@@ -436,11 +442,20 @@ struct AddLauncherView: View {
         options.blockClaude = blockClaude
         options.addDefaultCompanion = addDefaultCompanion
         options.replace = replaceExisting
+        var built: [TargetApp] = []
         for app in buildable {
             do {
                 try LauncherBuilder.build(for: app, options: options)
+                built.append(app)
             } catch {
                 failures.append("\(app.name):\(error.localizedDescription)")
+            }
+        }
+        if removeFromDock {
+            do {
+                try DockHelper.removeApps(built.filter(LauncherBuilder.canRemoveOriginalFromDock))
+            } catch {
+                failures.append("从 Dock 移除原图标:\(error.localizedDescription)")
             }
         }
         onDone()

@@ -90,6 +90,13 @@ enum LauncherBuilder {
         sanitizeFileName("\(app.name)（默认）")
     }
 
+    /// 原 App 的 Dock 图标能不能拿掉:浏览器要有「平时用的」快捷方式,否则平时用的实例就没有入口了
+    static func canRemoveOriginalFromDock(_ app: TargetApp) -> Bool {
+        guard app.browserKind == .chromium else { return true }
+        let companion = launcherRoot.appendingPathComponent(defaultCompanionName(for: app) + ".app")
+        return FileManager.default.fileExists(atPath: companion.path)
+    }
+
     /// 生成「平时用的浏览器」快捷方式:默认数据目录、系统时区,用 -n 强制另开实例
     @discardableResult
     static func buildDefaultCompanion(for app: TargetApp, replace: Bool) throws -> URL {
@@ -314,6 +321,33 @@ enum DockHelper {
             ] as [String: Any],
         ], at: 0)
         dock["persistent-others"] = others
+        try importDock(dock)
+    }
+
+    /// 从 Dock 左侧常驻区拿掉这些 App 的原图标(按 bundle ID 或路径匹配),返回拿掉的个数。
+    /// App 运行时 Dock 里照样会出现它的图标,退出后消失。
+    @discardableResult
+    static func removeApps(_ apps: [TargetApp]) throws -> Int {
+        guard !apps.isEmpty else { return 0 }
+        var dock = try exportDock()
+        let tiles = dock["persistent-apps"] as? [[String: Any]] ?? []
+        let bundleIDs = Set(apps.map(\.bundleID))
+        let paths = Set(apps.map { $0.url.standardizedFileURL.path })
+        let kept = tiles.filter { tile in
+            let data = tile["tile-data"] as? [String: Any]
+            if let bid = data?["bundle-identifier"] as? String, bundleIDs.contains(bid) { return false }
+            let file = data?["file-data"] as? [String: Any]
+            if let s = file?["_CFURLString"] as? String, let url = URL(string: s),
+               paths.contains(url.standardizedFileURL.path) { return false }
+            return true
+        }
+        guard kept.count < tiles.count else { return 0 }
+        dock["persistent-apps"] = kept
+        try importDock(dock)
+        return tiles.count - kept.count
+    }
+
+    private static func importDock(_ dock: [String: Any]) throws {
         let data = try PropertyListSerialization.data(fromPropertyList: dock, format: .xml, options: 0)
         let r = try Shell.run("/usr/bin/defaults", ["import", "com.apple.dock", "-"], input: data)
         guard r.status == 0 else { throw BuildError.io("写入 Dock 设置失败:" + r.errText) }

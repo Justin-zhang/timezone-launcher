@@ -49,7 +49,7 @@ enum CLI {
     用法:
       时区启动器 --list
       时区启动器 --create --app <App路径> --tz <时区> [--badge 文字] [--color #RRGGBB]
-                         [--name 名称] [--no-block-claude] [--no-default] [--data-dir 目录] [--replace]
+                         [--name 名称] [--no-block-claude] [--no-default] [--keep-dock] [--data-dir 目录] [--replace]
       时区启动器 --add-default --app <浏览器路径> [--replace]
       时区启动器 --remove <快捷方式路径> [--with-data]
       时区启动器 --render-icon --app <App路径> --tz <时区> [--badge 文字] [--color #RRGGBB] --out <png>
@@ -96,6 +96,10 @@ enum CLI {
                 o.addDefaultCompanion = !flags.contains("--no-default")
                 let url = try LauncherBuilder.build(for: app, options: o)
                 print("已生成:\(url.path)")
+                if !flags.contains("--keep-dock"), LauncherBuilder.canRemoveOriginalFromDock(app),
+                   try DockHelper.removeApps([app]) > 0 {
+                    print("已从 Dock 移除原图标:\(app.name)")
+                }
             case "--add-default":
                 guard let path = opts["--app"], let app = TargetApp.load(URL(fileURLWithPath: path)) else {
                     throw BuildError.io("缺少或无效的 --app")
